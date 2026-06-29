@@ -1,0 +1,13 @@
+{
+	"name": "Py-Android Dev Environment",
+	"image": "mcr.microsoft.com/devcontainers/python:3.12",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"vscjava.vscode-java-pack"
+			]
+		}
+	},
+	"postCreateCommand": "bash .devcontainer/setup.sh"
+}
