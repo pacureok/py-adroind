@@ -1,84 +1,81 @@
 import os
 import subprocess
 import platform
-import stat
 import sys
 import tarfile
 import zipfile
-import gdown
-from jinja2 import Environment, FileSystemLoader
+import requests
+from tqdm import tqdm
 from .intre import ProjectInspector
 
 class AndroidBuilder:
     def __init__(self):
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.module_dir = os.path.abspath(os.path.join(self.base_dir, "..", "..", "module"))
-        self.templates_dir = os.path.join(self.base_dir, "templates")
         self.os_type = platform.system().lower()
         self.arch = platform.machine().lower()
 
-        # IDs de tus archivos en Google Drive
-        self.drive_ids = {
-            "linux-x64": "17RDQI-2s2LJ2vmcAGvLGZV75DpKpkek5",
-            "linux-arm": "1EUGTBjOED2hoJbiqIcyqJ0zEBZqlW4da",
-            "windows": "1S_pUlTJgMkgKIarLyqG-Vyze0KQHVF5W",
-            "gradle": "18Xo8geowVpO4ZVVtY_ZFHGqcAboXiFKB"
+        # URLs directas de descarga (usando la técnica de export=download)
+        self.files = {
+            "jdk-windows": "https://drive.google.com/uc?export=download&id=1S_pUlTJgMkgKIarLyqG-Vyze0KQHVF5W",
+            "jdk-linux-x64": "https://drive.google.com/uc?export=download&id=17RDQI-2s2LJ2vmcAGvLGZV75DpKpkek5",
+            "jdk-linux-arm": "https://drive.google.com/uc?export=download&id=1EUGTBjOED2hoJbiqIcyqJ0zEBZqlW4da",
+            "gradle": "https://drive.google.com/uc?export=download&id=18Xo8geowVpO4ZVVtY_ZFHGqcAboXiFKB"
         }
 
+    def _download_file(self, url, dest_path):
+        """Descarga archivos con barra de progreso."""
+        print(f"📥 Descargando: {url.split('/')[-1]}...")
+        response = requests.get(url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        
+        with open(dest_path, 'wb') as f, tqdm(total=total_size, unit='B', unit_scale=True) as pbar:
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+                    pbar.update(len(chunk))
+
     def setup_env(self):
-        """Descarga y prepara el JDK y Gradle automáticamente."""
         if not os.path.exists(self.module_dir):
             os.makedirs(self.module_dir)
 
-        # 1. Determinar qué descargar
+        # Determinar qué JDK bajar
         if self.os_type == "windows":
-            jdk_id = self.drive_ids["windows"]
+            jdk_url = self.files["jdk-windows"]
         else:
-            jdk_id = self.drive_ids["linux-arm"] if "aarch64" in self.arch else self.drive_ids["linux-x64"]
+            jdk_url = self.files["jdk-linux-arm"] if "aarch64" in self.arch else self.files["jdk-linux-x64"]
 
-        jdk_path = os.path.join(self.module_dir, "jdk_pack.zip" if self.os_type == "windows" else "jdk_pack.tar.gz")
-        gradle_path = os.path.join(self.module_dir, "gradle_pack.zip")
+        jdk_zip = os.path.join(self.module_dir, "jdk.zip")
+        gradle_zip = os.path.join(self.module_dir, "gradle.zip")
 
-        # 2. Descargar si no existe la carpeta JDK
         if not os.path.exists(os.path.join(self.module_dir, "jdk-17")):
-            print("📥 Descargando JDK y Gradle desde Drive...")
-            gdown.download(id=jdk_id, output=jdk_path, quiet=False)
-            gdown.download(id=self.drive_ids["gradle"], output=gradle_path, quiet=False)
-
-            # 3. Extraer
-            self._extract(jdk_path, self.module_dir)
-            self._extract(gradle_path, self.module_dir)
+            self._download_file(jdk_url, jdk_zip)
+            self._download_file(self.files["gradle"], gradle_zip)
             
-            # Limpiar comprimidos
-            os.remove(jdk_path)
-            os.remove(gradle_path)
-            print("✅ Entorno configurado.")
-
-    def _extract(self, file_path, extract_to):
-        if file_path.endswith('.zip'):
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_to)
-        else:
-            with tarfile.open(file_path, "r:gz") as tar:
-                tar.extractall(extract_to)
+            print("📦 Extrayendo archivos...")
+            for f_path in [jdk_zip, gradle_zip]:
+                if f_path.endswith('.zip'):
+                    with zipfile.ZipFile(f_path, 'r') as z: z.extractall(self.module_dir)
+                else:
+                    with tarfile.open(f_path, "r:gz") as t: t.extractall(self.module_dir)
+                os.remove(f_path)
+            print("✅ Entorno listo.")
 
     def build_apk(self, project_path):
-        self.setup_env() # Asegura tener todo antes de construir
+        self.setup_env()
         
-        # Validar código (intre.py)
+        # Validar
         inspector = ProjectInspector(project_path, self.base_dir)
-        errors, _ = inspector.inspect()
-        if errors:
-            print("🚨 Error: Código incompatible detectado.")
+        if inspector.inspect()[0]: # Si hay errores
             sys.exit(1)
 
-        # Configurar Gradle
+        # Compilar
         gradlew = "gradlew.bat" if self.os_type == "windows" else "./gradlew"
-        # Asegúrate de ajustar la ruta si el nombre de la carpeta cambia al descomprimir
-        gradle_path = os.path.join(self.module_dir, "gradle-8.1", "bin", gradlew)
+        # Ajusta "gradle-8.1" al nombre real de la carpeta descomprimida
+        gradle_bin = os.path.join(self.module_dir, "gradle-8.1", "bin", gradlew)
         
         env = os.environ.copy()
         env["JAVA_HOME"] = os.path.join(self.module_dir, "jdk-17")
         
         print("🚀 Compilando...")
-        subprocess.run([gradle_path, "assembleRelease"], cwd=project_path, env=env, check=True)
+        subprocess.run([gradle_bin, "assembleRelease"], cwd=project_path, env=env, check=True)
