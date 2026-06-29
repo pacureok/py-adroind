@@ -15,23 +15,22 @@ class AndroidBuilder:
         self.os_type = platform.system().lower()
         self.arch = platform.machine().lower()
 
-        # URLs directas de descarga (usando la técnica de export=download)
+        # URLs directas de Hugging Face (con ?download=true)
         self.files = {
-            "jdk-windows": "https://drive.google.com/uc?export=download&id=1S_pUlTJgMkgKIarLyqG-Vyze0KQHVF5W",
-            "jdk-linux-x64": "https://drive.google.com/uc?export=download&id=17RDQI-2s2LJ2vmcAGvLGZV75DpKpkek5",
-            "jdk-linux-arm": "https://drive.google.com/uc?export=download&id=1EUGTBjOED2hoJbiqIcyqJ0zEBZqlW4da",
-            "gradle": "https://drive.google.com/uc?export=download&id=18Xo8geowVpO4ZVVtY_ZFHGqcAboXiFKB"
+            "jdk-windows": "https://huggingface.co/datasets/Pacureai/py-adroind/resolve/main/jdk-17.0.12_windows-x64_bin.zip?download=true",
+            "jdk-linux-x64": "https://huggingface.co/datasets/Pacureai/py-adroind/resolve/main/jdk-17.0.12_linux-x64_bin.tar.gz?download=true",
+            "jdk-linux-arm": "https://huggingface.co/datasets/Pacureai/py-adroind/resolve/main/jdk-17.0.12_linux-aarch64_bin.tar.gz?download=true",
+            "gradle": "https://huggingface.co/datasets/Pacureai/py-adroind/resolve/main/gradle-8.1.1.zip?download=true"
         }
 
     def _download_file(self, url, dest_path):
-        """Descarga archivos con barra de progreso."""
-        print(f"📥 Descargando: {url.split('/')[-1]}...")
-        response = requests.get(url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        
-        with open(dest_path, 'wb') as f, tqdm(total=total_size, unit='B', unit_scale=True) as pbar:
-            for chunk in response.iter_content(chunk_size=1024):
-                if chunk:
+        """Descarga binarios de forma segura."""
+        print(f"📥 Descargando: {url.split('/')[-1].split('?')[0]}...")
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            total_size = int(r.headers.get('content-length', 0))
+            with open(dest_path, 'wb') as f, tqdm(total=total_size, unit='B', unit_scale=True) as pbar:
+                for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
                     pbar.update(len(chunk))
 
@@ -39,43 +38,48 @@ class AndroidBuilder:
         if not os.path.exists(self.module_dir):
             os.makedirs(self.module_dir)
 
-        # Determinar qué JDK bajar
+        # Seleccionar JDK
         if self.os_type == "windows":
             jdk_url = self.files["jdk-windows"]
         else:
             jdk_url = self.files["jdk-linux-arm"] if "aarch64" in self.arch else self.files["jdk-linux-x64"]
 
-        jdk_zip = os.path.join(self.module_dir, "jdk.zip")
-        gradle_zip = os.path.join(self.module_dir, "gradle.zip")
+        jdk_path = os.path.join(self.module_dir, "jdk_pack")
+        gradle_path = os.path.join(self.module_dir, "gradle_pack")
 
+        # Descarga y extracción
         if not os.path.exists(os.path.join(self.module_dir, "jdk-17")):
-            self._download_file(jdk_url, jdk_zip)
-            self._download_file(self.files["gradle"], gradle_zip)
+            self._download_file(jdk_url, jdk_path)
+            self._download_file(self.files["gradle"], gradle_path)
             
             print("📦 Extrayendo archivos...")
-            for f_path in [jdk_zip, gradle_zip]:
-                if f_path.endswith('.zip'):
-                    with zipfile.ZipFile(f_path, 'r') as z: z.extractall(self.module_dir)
-                else:
-                    with tarfile.open(f_path, "r:gz") as t: t.extractall(self.module_dir)
-                os.remove(f_path)
-            print("✅ Entorno listo.")
+            self._extract_all(jdk_path, self.module_dir)
+            self._extract_all(gradle_path, self.module_dir)
+            os.remove(jdk_path)
+            os.remove(gradle_path)
+            print("✅ Entorno preparado.")
+
+    def _extract_all(self, file_path, target):
+        """Extrae según el formato detectado."""
+        if zipfile.is_zipfile(file_path):
+            with zipfile.ZipFile(file_path, 'r') as z: z.extractall(target)
+        else:
+            with tarfile.open(file_path, "r:gz") as t: t.extractall(target)
 
     def build_apk(self, project_path):
         self.setup_env()
         
-        # Validar
+        # Validar proyecto
         inspector = ProjectInspector(project_path, self.base_dir)
-        if inspector.inspect()[0]: # Si hay errores
-            sys.exit(1)
+        if inspector.inspect()[0]: sys.exit(1)
 
-        # Compilar
-        gradlew = "gradlew.bat" if self.os_type == "windows" else "./gradlew"
-        # Ajusta "gradle-8.1" al nombre real de la carpeta descomprimida
-        gradle_bin = os.path.join(self.module_dir, "gradle-8.1", "bin", gradlew)
+        # Configurar Gradle
+        # NOTA: Asegúrate de que el nombre de la carpeta sea 'gradle-8.1.1'
+        gradle_bin = os.path.join(self.module_dir, "gradle-8.1.1", "bin", 
+                                  "gradlew.bat" if self.os_type == "windows" else "gradlew")
         
         env = os.environ.copy()
         env["JAVA_HOME"] = os.path.join(self.module_dir, "jdk-17")
         
-        print("🚀 Compilando...")
+        print("🚀 Iniciando compilación...")
         subprocess.run([gradle_bin, "assembleRelease"], cwd=project_path, env=env, check=True)
