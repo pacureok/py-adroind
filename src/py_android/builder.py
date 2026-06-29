@@ -14,66 +14,17 @@ class AndroidBuilder:
         self.os_type = platform.system().lower()
 
     def setup_env(self):
-        if not os.path.exists(self.module_dir):
-            os.makedirs(self.module_dir)
+        """Descarga e instala el entorno JDK/Gradle."""
+        if not os.path.exists(self.module_dir): os.makedirs(self.module_dir)
         if not os.listdir(self.module_dir):
             jdk_url = "https://huggingface.co/datasets/Pacureai/py-adroind/resolve/main/jdk-17.0.12_windows-x64_bin.zip?download=true"
             gradle_url = "https://huggingface.co/datasets/Pacureai/py-adroind/resolve/main/gradle-8.1.1.zip?download=true"
             for url, name in [(jdk_url, "jdk.zip"), (gradle_url, "gradle.zip")]:
                 path = os.path.join(self.module_dir, name)
-                print(f"📥 Descargando: {name}...")
                 r = requests.get(url, stream=True)
-                with open(path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                with zipfile.ZipFile(path, 'r') as z:
-                    z.extractall(self.module_dir)
+                with open(path, 'wb') as f: f.write(r.content)
+                with zipfile.ZipFile(path, 'r') as z: z.extractall(self.module_dir)
                 os.remove(path)
-
-    def generate_gradle_files(self, project_path):
-        """Genera archivos de configuración incluyendo local.properties."""
-        
-        # 1. Crear local.properties (La corrección para el SDK)
-        sdk_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Android", "Sdk")
-        # Gradle prefiere barras normales / incluso en Windows
-        content = f"sdk.dir={sdk_path.replace(os.sep, '/')}"
-        with open(os.path.join(project_path, "local.properties"), "w") as f:
-            f.write(content)
-
-        # 2. Configuración de plugins (settings.gradle)
-        settings_gradle = """pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-rootProject.name = 'MyAndroidApp'
-"""
-        
-        # 3. Configuración del proyecto (build.gradle)
-        build_gradle = """plugins {
-    id 'com.android.application' version '8.1.0'
-}
-
-android {
-    namespace 'com.example.myapp'
-    compileSdk 33
-    defaultConfig {
-        applicationId "com.example.myapp"
-        minSdk 21
-        targetSdk 33
-    }
-}
-"""
-        
-        with open(os.path.join(project_path, "settings.gradle"), "w") as f:
-            f.write(settings_gradle)
-        
-        with open(os.path.join(project_path, "build.gradle"), "w") as f:
-            f.write(build_gradle)
-            
-        print("📄 Archivos configurados (Incluyendo local.properties para el SDK).")
 
     def find_binaries(self):
         is_win = self.os_type == "windows"
@@ -90,14 +41,10 @@ android {
 
     def build_apk(self, project_path):
         self.setup_env()
-        self.generate_gradle_files(project_path)
-        
-        inspector = ProjectInspector(project_path, self.base_dir)
-        if inspector.inspect()[0]: sys.exit(1)
-
         gradle_bin, java_home = self.find_binaries()
         if not gradle_bin or not java_home:
-            sys.exit(1)
+            print("❌ Error: No se encontró Gradle o JDK.")
+            return False
 
         env = os.environ.copy()
         env["JAVA_HOME"] = java_home
@@ -106,6 +53,7 @@ android {
         try:
             subprocess.run([gradle_bin, "assembleRelease"], cwd=project_path, env=env, check=True)
             print("✅ ¡Compilación finalizada con éxito!")
+            return True
         except subprocess.CalledProcessError as e:
             print(f"❌ Error durante la compilación: {e}")
-            sys.exit(1)
+            return False
