@@ -15,7 +15,7 @@ class AndroidBuilder:
         self.os_type = platform.system().lower()
 
     def setup_env(self):
-        """Descarga e instala el entorno si no está presente."""
+        """Descarga e instala el entorno JDK/Gradle si no está presente."""
         if not os.path.exists(self.module_dir):
             os.makedirs(self.module_dir)
         
@@ -37,25 +37,49 @@ class AndroidBuilder:
                 os.remove(path)
             print("✅ Entorno descargado correctamente.")
 
-    def find_binaries(self):
-        """Busca gradlew.bat/gradle.bat y JAVA_HOME en la carpeta de módulos."""
-        is_win = self.os_type == "windows"
+    def generate_gradle_files(self, project_path):
+        """Crea los archivos necesarios para que Gradle reconozca el proyecto si no existen."""
+        # Definir contenido básico
+        build_gradle = """plugins {
+    id 'com.android.application'
+}
+android {
+    compileSdk 33
+    defaultConfig {
+        applicationId "com.example.myapp"
+        minSdk 21
+        targetSdk 33
+    }
+}"""
+        settings_gradle = 'rootProject.name = "MyAndroidApp"'
         
-        # Lista de candidatos: prioridad para gradlew, fallback a gradle
+        # Crear build.gradle si no existe
+        bg_path = os.path.join(project_path, "build.gradle")
+        if not os.path.exists(bg_path):
+            with open(bg_path, "w") as f:
+                f.write(build_gradle)
+        
+        # Crear settings.gradle si no existe
+        sg_path = os.path.join(project_path, "settings.gradle")
+        if not os.path.exists(sg_path):
+            with open(sg_path, "w") as f:
+                f.write(settings_gradle)
+            print("📄 Archivos de proyecto (build.gradle/settings.gradle) generados.")
+
+    def find_binaries(self):
+        """Busca el ejecutable de Gradle y la carpeta JAVA_HOME."""
+        is_win = self.os_type == "windows"
         gradle_candidates = ["gradlew.bat", "gradle.bat"] if is_win else ["gradlew", "gradle"]
         java_exe = "java.exe" if is_win else "java"
         
         gradle_bin = None
         java_home = None
 
-        # Escaneo profundo
         for root, dirs, files in os.walk(self.module_dir):
-            # Buscar el ejecutable de Gradle
             for candidate in gradle_candidates:
                 if candidate in files:
                     gradle_bin = os.path.join(root, candidate)
             
-            # Buscar el JAVA_HOME (carpeta que contenga /bin/java.exe)
             if "bin" in dirs and java_exe in os.listdir(os.path.join(root, "bin")):
                 java_home = root
         
@@ -69,24 +93,24 @@ class AndroidBuilder:
     def build_apk(self, project_path):
         self.setup_env()
         
-        # Inspección del proyecto
+        # Asegurar estructura de Gradle
+        self.generate_gradle_files(project_path)
+        
+        # Inspección
         inspector = ProjectInspector(project_path, self.base_dir)
         if inspector.inspect()[0]: 
             sys.exit(1)
 
-        # Localizar binarios
         gradle_bin, java_home = self.find_binaries()
         
         if not gradle_bin or not java_home:
             sys.exit(1)
 
-        # Preparar variables de entorno
         env = os.environ.copy()
         env["JAVA_HOME"] = java_home
         
-        print(f"🚀 Iniciando construcción con Gradle: {gradle_bin}")
+        print(f"🚀 Iniciando construcción con: {gradle_bin}")
         try:
-            # Ejecución del comando de compilación
             subprocess.run([gradle_bin, "assembleRelease"], cwd=project_path, env=env, check=True)
             print("✅ ¡Compilación finalizada con éxito!")
         except subprocess.CalledProcessError as e:
