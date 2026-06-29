@@ -31,9 +31,16 @@ class AndroidBuilder:
                 os.remove(path)
 
     def generate_gradle_files(self, project_path):
-        """Genera archivos con la configuración correcta de repositorios y versiones."""
+        """Genera archivos de configuración incluyendo local.properties."""
         
-        # 1. Configuración de plugins y repositorios (settings.gradle)
+        # 1. Crear local.properties (La corrección para el SDK)
+        sdk_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Android", "Sdk")
+        # Gradle prefiere barras normales / incluso en Windows
+        content = f"sdk.dir={sdk_path.replace(os.sep, '/')}"
+        with open(os.path.join(project_path, "local.properties"), "w") as f:
+            f.write(content)
+
+        # 2. Configuración de plugins (settings.gradle)
         settings_gradle = """pluginManagement {
     repositories {
         google()
@@ -44,7 +51,7 @@ class AndroidBuilder:
 rootProject.name = 'MyAndroidApp'
 """
         
-        # 2. Configuración del proyecto (build.gradle)
+        # 3. Configuración del proyecto (build.gradle)
         build_gradle = """plugins {
     id 'com.android.application' version '8.1.0'
 }
@@ -66,7 +73,7 @@ android {
         with open(os.path.join(project_path, "build.gradle"), "w") as f:
             f.write(build_gradle)
             
-        print("📄 Archivos configurados correctamente con plugin version 8.1.0.")
+        print("📄 Archivos configurados (Incluyendo local.properties para el SDK).")
 
     def find_binaries(self):
         is_win = self.os_type == "windows"
