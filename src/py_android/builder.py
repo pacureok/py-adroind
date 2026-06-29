@@ -4,7 +4,6 @@ import platform
 import sys
 import zipfile
 import requests
-from tqdm import tqdm
 from .intre import ProjectInspector
 
 class AndroidBuilder:
@@ -15,15 +14,11 @@ class AndroidBuilder:
         self.os_type = platform.system().lower()
 
     def setup_env(self):
-        """Descarga e instala el entorno JDK/Gradle si no está presente."""
         if not os.path.exists(self.module_dir):
             os.makedirs(self.module_dir)
-        
-        # Verificar si la carpeta está vacía
         if not os.listdir(self.module_dir):
             jdk_url = "https://huggingface.co/datasets/Pacureai/py-adroind/resolve/main/jdk-17.0.12_windows-x64_bin.zip?download=true"
             gradle_url = "https://huggingface.co/datasets/Pacureai/py-adroind/resolve/main/gradle-8.1.1.zip?download=true"
-            
             for url, name in [(jdk_url, "jdk.zip"), (gradle_url, "gradle.zip")]:
                 path = os.path.join(self.module_dir, name)
                 print(f"📥 Descargando: {name}...")
@@ -31,78 +26,69 @@ class AndroidBuilder:
                 with open(path, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
-                
                 with zipfile.ZipFile(path, 'r') as z:
                     z.extractall(self.module_dir)
                 os.remove(path)
-            print("✅ Entorno descargado correctamente.")
 
     def generate_gradle_files(self, project_path):
-        """Crea los archivos necesarios para que Gradle reconozca el proyecto si no existen."""
-        # Definir contenido básico
-        build_gradle = """plugins {
-    id 'com.android.application'
+        """Genera archivos con la configuración correcta de repositorios y versiones."""
+        
+        # 1. Configuración de plugins y repositorios (settings.gradle)
+        settings_gradle = """pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
 }
+rootProject.name = 'MyAndroidApp'
+"""
+        
+        # 2. Configuración del proyecto (build.gradle)
+        build_gradle = """plugins {
+    id 'com.android.application' version '8.1.0'
+}
+
 android {
+    namespace 'com.example.myapp'
     compileSdk 33
     defaultConfig {
         applicationId "com.example.myapp"
         minSdk 21
         targetSdk 33
     }
-}"""
-        settings_gradle = 'rootProject.name = "MyAndroidApp"'
+}
+"""
         
-        # Crear build.gradle si no existe
-        bg_path = os.path.join(project_path, "build.gradle")
-        if not os.path.exists(bg_path):
-            with open(bg_path, "w") as f:
-                f.write(build_gradle)
+        with open(os.path.join(project_path, "settings.gradle"), "w") as f:
+            f.write(settings_gradle)
         
-        # Crear settings.gradle si no existe
-        sg_path = os.path.join(project_path, "settings.gradle")
-        if not os.path.exists(sg_path):
-            with open(sg_path, "w") as f:
-                f.write(settings_gradle)
-            print("📄 Archivos de proyecto (build.gradle/settings.gradle) generados.")
+        with open(os.path.join(project_path, "build.gradle"), "w") as f:
+            f.write(build_gradle)
+            
+        print("📄 Archivos configurados correctamente con plugin version 8.1.0.")
 
     def find_binaries(self):
-        """Busca el ejecutable de Gradle y la carpeta JAVA_HOME."""
         is_win = self.os_type == "windows"
         gradle_candidates = ["gradlew.bat", "gradle.bat"] if is_win else ["gradlew", "gradle"]
         java_exe = "java.exe" if is_win else "java"
+        gradle_bin, java_home = None, None
         
-        gradle_bin = None
-        java_home = None
-
         for root, dirs, files in os.walk(self.module_dir):
             for candidate in gradle_candidates:
-                if candidate in files:
-                    gradle_bin = os.path.join(root, candidate)
-            
+                if candidate in files: gradle_bin = os.path.join(root, candidate)
             if "bin" in dirs and java_exe in os.listdir(os.path.join(root, "bin")):
                 java_home = root
-        
-        if not gradle_bin:
-            print(f"❌ Error: No se encontró un ejecutable de Gradle válido en {self.module_dir}")
-        if not java_home:
-            print("❌ Error: No se pudo localizar la carpeta JDK.")
-            
         return gradle_bin, java_home
 
     def build_apk(self, project_path):
         self.setup_env()
-        
-        # Asegurar estructura de Gradle
         self.generate_gradle_files(project_path)
         
-        # Inspección
         inspector = ProjectInspector(project_path, self.base_dir)
-        if inspector.inspect()[0]: 
-            sys.exit(1)
+        if inspector.inspect()[0]: sys.exit(1)
 
         gradle_bin, java_home = self.find_binaries()
-        
         if not gradle_bin or not java_home:
             sys.exit(1)
 
